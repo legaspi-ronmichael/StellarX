@@ -1,27 +1,25 @@
+
+
+
+
+
 // Seed script for demo data
 // Run: npm run seed
 
 import 'dotenv/config';
 import mongoose from 'mongoose';
 import { connectDB } from './src/config/db.js';
-import {
-  initStellar,
-  fundTestnetAccount,
-  generateKeypair,
-  createMultiSigTreasury,
-  sendPayment,
-  verifyTransaction,
-} from './src/services/stellar.service.js';
+import { initStellar, fundTestnetAccount, generateKeypair } from './src/config/stellar.js';
+import { createMultiSigTreasury, sendPayment, verifyTransaction } from './src/services/stellar.service.js';
 import User from './src/models/User.js';
 import League from './src/models/League.js';
 import Team from './src/models/Team.js';
 import Payment from './src/models/Payment.js';
 import Payout from './src/models/Payout.js';
 import Match from './src/models/Match.js';
+import fs from 'fs';
 
-async function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
   console.log('🌱 Starting seed...');
@@ -32,7 +30,6 @@ async function main() {
   await initStellar();
   console.log('✅ Stellar initialized');
 
-  // Clear existing data
   await Promise.all([
     User.deleteMany({}),
     League.deleteMany({}),
@@ -75,16 +72,14 @@ async function main() {
     console.log(`  ✓ ${spec.name} (${spec.role}) → ${kp.publicKey().slice(0, 8)}...`);
   }
 
-  // 2. Create treasury signers
+  // 2. Treasury signers
   console.log('\n🔐 Creating treasury signers...');
   const signer1 = generateKeypair();
   const signer2 = generateKeypair();
   const signer3 = generateKeypair();
 
   for (const s of [signer1, signer2, signer3]) {
-    try {
-      await fundTestnetAccount(s.publicKey());
-    } catch {}
+    try { await fundTestnetAccount(s.publicKey()); } catch {}
     await sleep(300);
   }
 
@@ -93,14 +88,13 @@ async function main() {
   console.log('  Signer 3:', signer3.publicKey());
 
   // Save signer secrets to .env
-  const fs = await import('fs');
   const envPath = './.env';
   if (fs.existsSync(envPath)) {
     let envContent = fs.readFileSync(envPath, 'utf-8');
     if (!envContent.includes('TREASURY_SIGNER_1_SECRET')) {
-      envContent += `\nTREASURY_SIGNER_1_SECRET=${signer1.secret()}\n`;
-      envContent += `TREASURY_SIGNER_2_SECRET=${signer2.secret()}\n`;
-      envContent += `TREASURY_SIGNER_3_SECRET=${signer3.secret()}\n`;
+      envContent += '\nTREASURY_SIGNER_1_SECRET=' + signer1.secret() + '\n';
+      envContent += 'TREASURY_SIGNER_2_SECRET=' + signer2.secret() + '\n';
+      envContent += 'TREASURY_SIGNER_3_SECRET=' + signer3.secret() + '\n';
       fs.writeFileSync(envPath, envContent);
       console.log('  ✅ Saved signer secrets to .env');
     } else {
@@ -108,7 +102,7 @@ async function main() {
     }
   }
 
-  // 3. Create the multi-sig treasury
+  // 3. Multi-sig treasury
   console.log('\n🏛️  Creating multi-sig treasury...');
   const treasury = await createMultiSigTreasury([
     signer1.secret(),
@@ -117,7 +111,7 @@ async function main() {
   ]);
   console.log('  Treasury public key:', treasury.publicKey);
 
-  // 4. Create basketball league
+  // 4. Basketball league
   console.log('\n🏀 Creating basketball league...');
   const admin = users[0];
   const basketballLeague = await League.create({
@@ -144,7 +138,7 @@ async function main() {
   });
   console.log('  ✓', basketballLeague.name);
 
-  // 5. Create volleyball league
+  // 5. Volleyball league
   console.log('\n🏐 Creating volleyball league...');
   const volleyballLeague = await League.create({
     name: 'Quezon City Volleyball Open 2026',
@@ -166,7 +160,7 @@ async function main() {
     registrationClosesAt: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000),
     startsAt: new Date(Date.now() + 18 * 24 * 60 * 60 * 1000),
     createdBy: admin._id,
-    bannerColor: 'from-blue-500 to-cyan-600',
+    bannerColor: 'from-blue-500-to-cyan-600',
   });
   console.log('  ✓', volleyballLeague.name);
 
@@ -183,9 +177,7 @@ async function main() {
   const teams = [];
   for (const spec of teamSpecs) {
     const teamKp = generateKeypair();
-    try {
-      await fundTestnetAccount(teamKp.publicKey());
-    } catch {}
+    try { await fundTestnetAccount(teamKp.publicKey()); } catch {}
     await sleep(500);
 
     const team = await Team.create({
@@ -194,15 +186,13 @@ async function main() {
       captain: spec.captain._id,
       walletPublicKey: teamKp.publicKey(),
       walletSecretKey: teamKp.secret(),
-      players: [
-        { user: spec.captain._id, name: spec.captain.name, joinedAt: new Date() },
-      ],
+      players: [{ user: spec.captain._id, name: spec.captain.name, joinedAt: new Date() }],
     });
     teams.push({ team, fee: spec.fee, captain: spec.captain, league: spec.league });
     console.log(`  ✓ ${spec.name} (${spec.league.sport})`);
   }
 
-  // 7. Make real Stellar payments
+  // 7. Real Stellar payments
   console.log('\n💸 Sending real testnet payments to treasury...');
 
   for (const t of teams) {
@@ -212,19 +202,19 @@ async function main() {
       continue;
     }
 
-    const memo = `${t.league.name.slice(0, 14)}:${t.team.name.slice(0, 8)}`;
+    const memo = t.league.name.slice(0, 14) + ':' + t.team.name.slice(0, 8);
     try {
       const result = await sendPayment({
         sourceSecret: captainUser.stellarSecretKey,
         destination: t.league.treasuryPublicKey,
         amount: t.fee.toString(),
-        memo,
+        memo: memo,
       });
       console.log(`  ✓ ${t.team.name} paid ${t.fee} XLM (tx: ${result.hash.slice(0, 8)}...)`);
 
       const verification = await verifyTransaction(result.hash);
 
-      const payment = await Payment.create({
+      await Payment.create({
         type: 'dues',
         league: t.league._id,
         team: t.team._id,
@@ -235,11 +225,11 @@ async function main() {
         amount: t.fee,
         txHash: result.hash,
         ledger: result.ledger,
-        memo,
+        memo: memo,
         blockchainTimestamp: verification.createdAt,
         status: 'confirmed',
         feeCharged: parseFloat(verification.feeXLM),
-        note: `${t.team.name} registration in ${t.league.name}`,
+        note: t.team.name + ' registration in ' + t.league.name,
       });
 
       t.team.paymentStatus = 'paid';
@@ -255,22 +245,25 @@ async function main() {
   }
 
   // 8. Summary
+  const totalAgg = await Payment.aggregate([
+    { $match: { status: 'confirmed' } },
+    { $group: { _id: null, t: { $sum: '$amount' } } },
+  ]);
+  const totalCollected = totalAgg.length > 0 ? totalAgg[0].t : 0;
+  const basketballTeams = await Team.countDocuments({ league: basketballLeague._id });
+  const volleyballTeams = await Team.countDocuments({ league: volleyballLeague._id });
+
   console.log('\n' + '='.repeat(60));
   console.log('🎉 SEED COMPLETE!');
   console.log('='.repeat(60));
   console.log('\n📋 Demo Accounts (all password: demo1234):');
-  userSpecs.forEach((u) => console.log(`  • ${u.email} (${u.role})`));
+  userSpecs.forEach((u) => console.log('  • ' + u.email + ' (' + u.role + ')'));
   console.log('\n🏀 Basketball League:', basketballLeague.name);
   console.log('   Treasury:', basketballLeague.treasuryPublicKey);
-  console.log('   Teams:', await Team.countDocuments({ league: basketballLeague._id }));
+  console.log('   Teams:', basketballTeams);
   console.log('\n🏐 Volleyball League:', volleyballLeague.name);
-  console.log('   Teams:', await Team.countDocuments({ league: volleyballLeague._id }));
-  console.log('\n💰 Total collected:',
-    (await Payment.aggregate([
-      { $match: { status: 'confirmed' } },
-      { $group: { _id: null, t: { $sum: '$amount' } } },
-    ]))[0]?.t || 0, 'XLM');
-
+  console.log('   Teams:', volleyballTeams);
+  console.log('\n💰 Total collected:', totalCollected, 'XLM');
   console.log('\n💡 Treasury signer secrets have been saved to backend/.env');
   console.log('   You can now start the server with: npm run dev\n');
 
